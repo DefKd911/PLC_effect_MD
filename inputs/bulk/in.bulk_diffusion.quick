@@ -1,0 +1,78 @@
+# LAMMPS input script for bulk Mg diffusion in Al-5wt%Mg
+# QUICK TEST VERSION - Reduced simulation time for testing
+# Computes MSD for Mg atoms at specified temperature
+
+# ============================================
+# VARIABLES (set via command line or modify here)
+# ============================================
+variable T equal 800          # Temperature (K)
+variable pot_file string "potentials/Al-Mg.eam.fs"  # Potential file
+variable data_file string "inputs/bulk/bulk_system.data"
+variable output_dir string "outputs/bulk"
+variable dump_freq equal 1000  # Dump frequency
+variable thermo_freq equal 100 # Thermo frequency
+
+# ============================================
+# INITIALIZATION
+# ============================================
+units metal
+atom_style atomic
+dimension 3
+boundary p p p
+
+# ============================================
+# READ DATA
+# ============================================
+read_data ${data_file}
+
+# ============================================
+# POTENTIAL
+# ============================================
+pair_style eam/fs
+pair_coeff * * ${pot_file} Al Mg
+
+# ============================================
+# COMPUTE DEFINITIONS
+# ============================================
+# Compute MSD for Mg atoms (type 2)
+compute msd_Mg all msd com yes
+compute temp_Mg all temp/partial 0 0 1  # Temperature of Mg atoms only
+
+# ============================================
+# EQUILIBRATION: NPT (SHORTENED FOR TESTING)
+# ============================================
+reset_timestep 0
+timestep 0.001  # 1 fs
+
+velocity all create ${T} 12345 rot yes dist gaussian
+
+fix 1 all npt temp ${T} ${T} 0.1 iso 0.0 0.0 1.0
+thermo_style custom step temp pe ke etotal press vol lx ly lz
+thermo ${thermo_freq}
+run 10000  # 10 ps equilibration (reduced from 50 ps)
+
+# ============================================
+# PRODUCTION: NVT (SHORTENED FOR TESTING)
+# ============================================
+unfix 1
+fix 1 all nvt temp ${T} ${T} 0.1
+fix 2 all ave/time 1 1 ${dump_freq} c_msd_Mg[1] c_msd_Mg[2] c_msd_Mg[3] c_msd_Mg[4] file ${output_dir}/msd_T${T}.dat
+
+dump 1 all custom ${dump_freq} ${output_dir}/traj_T${T}.lammpstrj id type x y z
+dump_modify 1 element Al Mg
+
+thermo_style custom step temp pe ke etotal press vol c_temp_Mg
+thermo ${thermo_freq}
+
+run 100000  # 0.1 ns production (reduced from 10 ns for testing)
+# NOTE: For production runs, use 10000000 steps (10 ns) for accurate diffusivity
+
+# ============================================
+# FINAL OUTPUT
+# ============================================
+print "Simulation completed at T = ${T} K"
+print "MSD data written to: ${output_dir}/msd_T${T}.dat"
+print "Trajectory written to: ${output_dir}/traj_T${T}.lammpstrj"
+print "NOTE: This was a QUICK TEST run. For production, use in.bulk_diffusion with 10 ns."
+
+

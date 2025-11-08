@@ -1,0 +1,13 @@
+Length Scales for DSA Analysis
+
+L_c (Capture Radius) - for tau_diff = L_c^2 / D_eff:
+  Values: [1. 2. 5.] nm
+  Physical meaning: Distance for solute capture by dislocation
+  Scale: nanometers
+
+L_t (Travel Distance) - for tau_wait = L_t / (rho_m * b * epsilon_dot):
+  Values: [ 0.1  1.  10. ] um
+  Physical meaning: Distance dislocation travels before pinning
+  Scale: micrometers
+
+CRITICAL: These are DIFFERENT length scales with different physical meanings!

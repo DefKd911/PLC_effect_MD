@@ -1,0 +1,65 @@
+# LAMMPS input script for Mg diffusion near dislocation core
+# Computes MSD for Mg atoms in radial bins around dislocation
+
+variable T equal 800
+variable pot_file string "potentials/Al-Mg.eam.fs"
+variable data_file string "inputs/dislocation/dislocation_system.data"
+variable output_dir string "outputs/dislocation"
+variable dump_freq equal 1000
+variable thermo_freq equal 100
+
+# Dislocation core position (set after reading data)
+variable x0 equal 80.0  # Approximate core x position (Angstrom)
+variable y0 equal 80.0  # Approximate core y position (Angstrom)
+
+units metal
+atom_style atomic
+dimension 3
+boundary p p p
+
+read_data ${data_file}
+
+pair_style eam/fs
+pair_coeff * * ${pot_file} Al Mg
+
+# Compute distance from dislocation core for each atom
+compute dist all property/atom xu yu zu
+variable dx atom xu-${x0}
+variable dy atom yu-${y0}
+variable r atom sqrt(v_dx^2+v_dy^2)
+
+# Identify radial bins
+# Bin 1: 0-0.5 nm (0-5 Angstrom)
+# Bin 2: 0.5-1 nm (5-10 Angstrom)
+# Bin 3: 1-2 nm (10-20 Angstrom)
+# Bin 4: >2 nm (>20 Angstrom)
+
+compute bin1 all property/atom v_r
+compute bin1_Mg all property/atom v_r
+compute bin1_Mg all property/atom v_r type 2  # Only Mg atoms
+
+# MSD for different radial bins
+compute msd_core all msd com yes group/group bin1_Mg
+compute msd_near all msd com yes group/group bin2_Mg
+compute msd_far all msd com yes group/group bin3_Mg
+compute msd_bulk all msd com yes group/group bin4_Mg
+
+reset_timestep 0
+timestep 0.001
+
+velocity all create ${T} 12345 rot yes dist gaussian
+
+# Relaxation with fixed boundaries
+fix 1 all nvt temp ${T} ${T} 0.1
+fix 2 all ave/time 1 1 ${dump_freq} c_msd_core[4] c_msd_near[4] c_msd_far[4] c_msd_bulk[4] file ${output_dir}/msd_radial_T${T}.dat
+
+dump 1 all custom ${dump_freq} ${output_dir}/traj_T${T}.lammpstrj id type x y z
+dump_modify 1 element Al Mg
+
+thermo_style custom step temp pe ke etotal press vol
+thermo ${thermo_freq}
+
+run 10000000  # 10 ns
+
+print "Simulation completed at T = ${T} K"
+
