@@ -396,11 +396,10 @@ pip install -r requirements.txt
 ## 👥 Project Team
 
 - Kartik Dua
-- Rishika Shresth
 - Soham Das
 - Kashish
 - Vishal Ram
-- Ashish Chin
+- Rishika Shresth
 
 ---
 
