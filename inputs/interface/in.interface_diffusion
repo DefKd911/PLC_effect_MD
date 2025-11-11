@@ -1,0 +1,137 @@
+# LAMMPS input script for Al/Mg interface diffusion study
+# Based on methodology from Fan et al., 2018 (Al–Mg interface diffusion)
+#
+# Usage example:
+#   lmp -in inputs/interface/in.interface_diffusion -var T 700
+#
+# Required command-line variables:
+#   - T : temperature in Kelvin (e.g., 600, 700, 800)
+
+# ============================================
+# USER VARIABLES
+# ============================================
+variable T index 700                    # Temperature (must be overridden via -var)
+variable library_file string "potentials/MgAlZn.library.meam"
+variable parameter_file string "potentials/MgAlZn.parameter.meam"
+variable data_file string "inputs/interface/interface_system_small.data"
+variable output_dir string "outputs/interface_1k"
+variable dump_freq equal 1000
+variable thermo_freq equal 200
+variable equil_steps equal 20000        # 20 ps with 1 fs timestep
+variable prod_steps equal 400000        # 0.4 ns with 1 fs timestep
+variable bin_width equal 2.0            # Å, spatial bin size for concentration profile
+variable fixed_thickness equal 5.0      # Å of atoms to hold fixed at each end
+
+# Ensure output directory exists
+shell mkdir ${output_dir}
+
+# ============================================
+# INITIALIZATION
+# ============================================
+units metal
+atom_style atomic
+boundary p p p
+
+# ============================================
+# SYSTEM SETUP
+# ============================================
+read_data ${data_file}
+
+pair_style meam
+pair_coeff * * ${library_file} Al Mg Zn ${parameter_file} Al Mg Zn
+
+group Al type 1
+group Mg type 2
+
+variable zlo equal 0.0
+variable zhi equal lz
+variable zcut_bottom equal v_zlo + v_fixed_thickness
+variable zcut_top equal v_zhi - v_fixed_thickness
+
+region fixed_bottom block INF INF INF INF v_zlo v_zcut_bottom units box
+region fixed_top block INF INF INF INF v_zcut_top v_zhi units box
+
+group fixed_bottom region fixed_bottom
+group fixed_top region fixed_top
+group fixed union fixed_bottom fixed_top
+group mobile subtract all fixed
+
+group Mg_mobile intersect Mg mobile
+group Al_mobile intersect Al mobile
+
+fix hold fixed setforce 0.0 0.0 0.0
+
+# ============================================
+# MINIMIZATION (RELAX INTERFACE)
+# ============================================
+reset_timestep 0
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+thermo_style custom step temp pe ke etotal press vol
+thermo ${thermo_freq}
+
+min_style cg
+minimize 1e-8 1e-10 1000 10000
+
+# ============================================
+# EQUILIBRATION (NPT)
+# ============================================
+timestep 0.001  # 1 fs
+velocity mobile create ${T} 12345 rot yes dist gaussian
+velocity fixed set 0.0 0.0 0.0
+
+compute thermoTemp mobile temp
+thermo_modify temp thermoTemp
+
+fix 1 mobile npt temp ${T} ${T} 0.1 aniso 0.0 0.0 1.0
+run ${equil_steps}
+
+# ============================================
+# PRODUCTION (NVT)
+# ============================================
+unfix 1
+fix 1 mobile nvt temp ${T} ${T} 0.1
+
+# MSD computes (species-specific)
+compute msd_Mg Mg_mobile msd com yes
+compute msd_Al Al_mobile msd com yes
+run 0
+
+fix msd_out mobile ave/time 1 1 ${dump_freq} c_msd_Mg[1] c_msd_Mg[2] c_msd_Mg[3] c_msd_Mg[4] &
+    c_msd_Al[1] c_msd_Al[2] c_msd_Al[3] c_msd_Al[4] &
+    file ${output_dir}/msd_interface_T${T}.dat
+
+# ============================================
+# SPATIAL PROFILES
+# ============================================
+compute cbin all chunk/atom bin/1d z lower ${bin_width} units box
+fix prof_all all ave/chunk ${dump_freq} 1 ${dump_freq} cbin density/number &
+    file ${output_dir}/profile_total_T${T}.dat
+fix prof_Mg Mg ave/chunk ${dump_freq} 1 ${dump_freq} cbin density/number &
+    file ${output_dir}/profile_Mg_T${T}.dat
+
+# ============================================
+# OUTPUT
+# ============================================
+dump 1 all custom ${dump_freq} ${output_dir}/traj_interface_T${T}.lammpstrj id type x y z
+dump_modify 1 element Al Mg Zn
+
+thermo_style custom step temp pe ke etotal press pxx pyy pzz vol
+thermo ${thermo_freq}
+
+run ${prod_steps}
+
+# ============================================
+# FINALIZE
+# ============================================
+unfix msd_out
+unfix prof_all
+unfix prof_Mg
+undump 1
+
+print "Interface diffusion simulation completed at T = ${T} K"
+print "MSD data: ${output_dir}/msd_interface_T${T}.dat"
+print "Profiles: ${output_dir}/profile_total_T${T}.dat (total), ${output_dir}/profile_Mg_T${T}.dat (Mg)"
+print "Trajectory: ${output_dir}/traj_interface_T${T}.lammpstrj"
+

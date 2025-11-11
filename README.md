@@ -1,3 +1,135 @@
+# MD Study of Dynamic Strain Aging (DSA) in Al–5 wt % Mg
+
+This repository combines molecular dynamics (MD), Arrhenius fitting, and analytical models to predict when Mg solutes in Al trigger the Portevin–Le Châtelier (PLC) effect. The documentation is split into focused READMEs so each contributor can dive directly into their part of the workflow.
+
+---
+
+## 📚 Documentation Map
+
+| Topic | README |
+|-------|--------|
+| Overall context & milestones | `docs/README_OVERVIEW.md` |
+| Running interface diffusion MD | `docs/README_DIFFUSION_MD.md` |
+| Interface geometry & MEAM setup | `docs/README_INTERFACE_MODEL.md` |
+| Potential provenance & usage | `docs/README_POTENTIALS.md` |
+| MSD QA rules & mitigation | `docs/README_MSD_QUALITY.md` |
+| Arrhenius regression & extrapolation | `docs/README_ARRHENIUS.md` |
+| DSA/PLC theory & results | `docs/README_DSA_PLC.md` |
+| Directory/data flow | `docs/README_PROJECT_STRUCTURE.md` |
+
+Start with the overview, then follow the path appropriate for simulation, analysis, or theoretical tasks.
+
+---
+
+## 🎯 Current Objectives
+
+1. **Interface MD** – Use an explicit Al\|Mg bilayer (MEAM) to capture asymmetrical interdiffusion.
+2. **Diffusivity Extraction** – Convert MSD to D(T), ensuring Mg R² ≥ 0.95 wherever possible.
+3. **Arrhenius Fit** – Obtain \(D_0\) and \(Q\) via log-space regression; extrapolate to 300–450 K.
+4. **DSA/PLC Prediction** – Compare \( \tau_{\text{diff}} = L_c^2/D_{\text{eff}} \) with \( \tau_{\text{wait}} = L_t/(\rho_m b \dot{\varepsilon}) \) to locate PLC temperature windows at \(10^{-3}\) s⁻¹.
+
+Bulk MD runs are archived; the interface route is the main production path for PLC analysis.
+
+---
+
+## 🔄 Workflow Snapshot
+
+1. **Build system** (`create_interface_system.py`)
+2. **Run MD** (`inputs/interface/in.interface_diffusion`)
+3. **MSD QA & diffusivity** (`analyze_interface_msd.py`, `check_msd_quality.py`)
+4. **Arrhenius fit** (`fit_arrhenius.py` – log-space, extrapolation)
+5. **DSA analysis** (`analyze_dsa.py` – τ_diff vs τ_wait)
+6. **Plots & docs** stored under `outputs/analysis/`
+
+Each stage is documented in the READMEs listed above.
+
+---
+
+## ✅ Current Results (1 k-atom interface, ~0.1–0.3 ns production)
+
+**Diffusivity table** (`outputs/analysis/interface_diffusivity_1k.csv`):
+
+| T (K) | D_Mg (m²/s) | R²_Mg | D_Al (m²/s) | R²_Al | D_interdiff (m²/s) |
+|-------|-------------|-------|-------------|-------|---------------------|
+| 700 | \(1.1\times10^{-11}\) | 0.79 | \(3.1\times10^{-12}\) | 0.92 | \(1.0\times10^{-11}\) |
+| 850 | \(2.2\times10^{-10}\) | 0.91 | \(1.1\times10^{-9}\) | 0.99 | \(2.6\times10^{-10}\) |
+| 900 | \(5.6\times10^{-11}\) | 0.45 | \(1.9\times10^{-9}\) | 0.99 | \(1.5\times10^{-10}\) |
+
+**Arrhenius (interdiffusion, log-fit)** – `outputs/analysis/arrhenius_interface_interdiff_params.csv`
+
+- \(D_0 = (1.23 \pm 0.54)\times10^{-5}\) m²/s  
+- \(Q = (80.5 \pm 29.5)\) kJ/mol (≈ 0.84 eV/atom)  
+- R² ≈ 0.88 (limited by Mg R² < 0.95 at 700 K & 900 K)
+
+**DSA prediction** – `outputs/analysis/tau_comparison.png`
+
+- For \( \rho_m = 10^{12} \) m⁻², \( L_c = 1 \) nm, \( L_t = 10 \) µm → PLC regime around **430–450 K** (ratio 0.1–10).  
+- CSVs for all \( (\rho_m, L_c, L_t) \) combos are in `outputs/analysis/dsa_*.csv`.
+
+---
+
+## ⚠️ Limitations & Open Work
+
+1. **Short MSD windows** – 700/900 K runs only ~0.12–0.3 ns ⇒ Mg slopes noisy (R² < 0.95).  
+   ➜ Extend to ≥ 0.6 ns or increase lateral size (6×6) to stabilise MSD.
+
+2. **Finite cross-section** – 4×4 cell amplifies fluctuations; evaluate larger systems when feasible.
+
+3. **Pipe diffusion** – Treated analytically (`D_eff = D (1 + f_pipe)`); no explicit dislocation MD yet.
+
+4. **Temperature coverage** – Add 750 K (or 650 K) to strengthen Arrhenius regression once MSD quality improves.
+
+5. **Experimental comparison** – Pending; schedule once revised diffusivities are available.
+
+All mitigation ideas are captured in `docs/README_MSD_QUALITY.md` and `docs/README_DSA_PLC.md`.
+
+---
+
+## 🗂️ Repository Layout (abridged)
+
+```
+docs/                  # Focused READMEs for each workflow stage
+inputs/interface/      # LAMMPS scripts & data for interface diffusion
+outputs/interface_1k/  # Latest MSD, logs, profiles
+outputs/analysis/      # Diffusivity tables, Arrhenius plots, DSA results
+scripts/               # Python helpers (setup, MSD QA, Arrhenius, DSA, plotting)
+potentials/            # Mg–Al–Zn MEAM files + instructions
+```
+
+Full map: `docs/README_PROJECT_STRUCTURE.md`.
+
+---
+
+## 🚀 Quick Start
+
+```powershell
+pip install -r requirements.txt
+python scripts\create_interface_system.py --nx 4 --ny 4 --nz-al 12 --nz-mg 4
+lmp -in inputs\interface\in.interface_diffusion -var T 850 -log outputs\interface_1k\log_T850.log
+python scripts\analyze_interface_msd.py outputs\interface_1k\msd_interface_T850.dat
+python scripts\fit_arrhenius.py --input outputs/analysis/interface_diffusivity_1k.csv --species interdiff --extrapolate
+python scripts\analyze_dsa.py
+```
+
+Adapt run length (`prod_steps`) and system size as needed; re-run MSD QA before updating the diffusivity table.
+
+---
+
+## 🔄 Next Steps
+
+1. Extend 700 K & 900 K runs to ≥ 0.6 ns (or larger cross-sections) to push Mg R² ≥ 0.95.
+2. Add another temperature (e.g., 750 K), refit Arrhenius with R² thresholding.
+3. Explore pipe-factor sensitivity (`--pipe-factor` in `analyze_dsa.py`) and compare with literature PLC maps.
+4. Update plots/READMEs as improved data arrive; integrate experimental benchmarks.
+
+---
+
+## 🧑‍🤝‍🧑 Team & License
+
+Kartik Dua · Rishika Shresth · Soham Das · Kashish · Vishal Ram · Ashish Chin  
+Academic research use only. Source: https://github.com/DefKd911/PLC_effect_MD.git
+
+_Last updated: incorporating interface-based diffusivity workflow, log-space Arrhenius fit, and PLC prediction._
 # MD Study of Dynamic Strain Aging (DSA) in Al-5wt%Mg Alloy
 
 ## 📋 Project Overview
@@ -55,19 +187,26 @@ Calculate diffusivity (D) of Mg in Al using MD, determine activation energy (Q) 
 ### Complete Workflow Stages
 
 #### **Stage 1: System Setup** ✅
-- Create optimized Al-5wt%Mg bulk system (6×6×6 = 864 atoms)
+- Create optimized Al-5wt%Mg bulk system (6×6×6 = 864 atoms, random Mg distribution)
+- Create Al/Mg layered interface system (Al substrate + Mg overlayer)
 - Validate length scales (L_c and L_t)
 - Verify potential file (Al-Mg.eam.fs)
 
 #### **Stage 2: Bulk Diffusion MD Simulations** ⏳
 - Run MD at **3 temperatures:** 500 K, 600 K, 700 K
-- Each simulation: 0.1 ns equilibration + 1 ns production
-- Collect MSD data for Mg atoms
+- Each simulation: 0.1 ns equilibration + 1 ns production (extend if MSD not linear)
+- Collect MSD data for Mg and Al atoms separately
 - **Time per simulation:** ~1-2 hours
 - **Total time:** ~3-6 hours (can run in parallel)
 
+#### **Stage 2B (Optional): Interface Diffusion MD Simulations** ⏳
+- Build Mg-over-Al layered system following Fan et al. methodology
+- Run MD at selected temperatures (e.g., 600-800 K) to observe Mg penetration
+- Output species-specific MSD and concentration profiles (z-direction bins)
+- Use to validate alternative diffusivity extraction paths or interdiffusivity
+
 #### **Stage 3: Extract Diffusivity** ⏳
-- Analyze MSD data → extract D(T) at each temperature
+- Analyze MSD data → extract D(T) for Mg (and Al) at each temperature
 - Validate MSD linearity (R² > 0.95)
 - Save: `outputs/analysis/diffusivity_bulk.csv`
 
@@ -110,15 +249,22 @@ PLC_effect/
 │   └── README.md               # Potential setup instructions
 │
 ├── inputs/                      # LAMMPS input scripts
-│   └── bulk/                   # Bulk diffusion simulations
-│       ├── in.bulk_diffusion  # Main input file (updated)
-│       └── bulk_system.data   # System file (864 atoms)
+│   ├── bulk/                   # Bulk diffusion simulations
+│   │   ├── in.bulk_diffusion  # Main input file (updated)
+│   │   └── bulk_system.data   # System file (864 atoms)
+│   └── interface/             # Al/Mg layered interface simulations
+│       ├── in.interface_diffusion
+│       └── interface_system.data
 │
 ├── outputs/                     # Simulation results
 │   ├── bulk/                   # Bulk diffusion outputs
 │   │   ├── msd_T*.dat        # MSD data files
 │   │   ├── traj_T*.lammpstrj # Trajectories (optional)
 │   │   └── log_T*.log        # LAMMPS logs
+│   ├── interface/             # Interface diffusion outputs (optional)
+│   │   ├── msd_interface_T*.dat
+│   │   ├── profile_*_T*.dat
+│   │   └── traj_interface_T*.lammpstrj
 │   └── analysis/              # Analysis results
 │       ├── diffusivity_bulk.csv
 │       ├── arrhenius_params_bulk.csv
@@ -127,9 +273,10 @@ PLC_effect/
 │
 ├── scripts/                     # Python analysis scripts
 │   ├── create_bulk_system.py          # Generate system
+│   ├── create_interface_system.py     # Generate layered Al/Mg interface
 │   ├── compute_length_scales.py       # Validate L_c and L_t
 │   ├── run_bulk_diffusion.py          # Run MD simulations
-│   ├── analyze_msd.py                 # Extract diffusivity
+│   ├── analyze_msd.py                 # Extract diffusivity (Mg & Al species)
 │   ├── fit_arrhenius.py               # Fit Arrhenius equation
 │   ├── analyze_dsa.py                 # DSA condition analysis
 │   ├── plot_results.py                # Generate plots
@@ -161,6 +308,7 @@ ls potentials/Al-Mg.eam.fs
 **Step 1: Verify Setup (2 min)**
 ```bash
 python scripts/compute_length_scales.py
+python scripts/create_interface_system.py  # Generates layered Al/Mg data file
 ```
 
 **Step 2: Run Simulations (3-6 hours)**
@@ -169,6 +317,9 @@ python scripts/compute_length_scales.py
 lmp -in inputs/bulk/in.bulk_diffusion -var T 500 -log outputs/bulk/log_T500.log
 lmp -in inputs/bulk/in.bulk_diffusion -var T 600 -log outputs/bulk/log_T600.log
 lmp -in inputs/bulk/in.bulk_diffusion -var T 700 -log outputs/bulk/log_T700.log
+
+# Optional: Interface diffusion (adjust prod_steps inside input as needed)
+lmp -in inputs/interface/in.interface_diffusion -var T 700 -log outputs/interface/log_T700.log
 
 # Or parallel (if you have 3 CPU cores)
 # Run each in separate terminal

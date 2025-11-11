@@ -1,92 +1,179 @@
 """
-Quick script to check MSD data quality.
+Quick script to check MSD data quality for bulk or interface runs.
 """
 
-import pandas as pd
-import numpy as np
-import sys
+import argparse
+import glob
 import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def check_msd_file(filename):
-    """Check MSD file quality."""
+
+def load_msd_file(filename: Path):
+    """
+    Load an MSD file and determine its schema (bulk vs interface).
+    """
+    df = pd.read_csv(filename, sep=r"\s+", comment="#", header=None)
+
+    if df.shape[1] == 5:
+        df.columns = ["step", "msd_x", "msd_y", "msd_z", "msd_total"]
+        schema = "bulk"
+    elif df.shape[1] >= 9:
+        df = df.iloc[:, :9]
+        df.columns = [
+            "step",
+            "Mg_x",
+            "Mg_y",
+            "Mg_z",
+            "Mg_total",
+            "Al_x",
+            "Al_y",
+            "Al_z",
+            "Al_total",
+        ]
+        schema = "interface"
+    else:
+        raise ValueError(
+            f"Unexpected number of columns ({df.shape[1]}) in {filename}"
+        )
+
+    return df, schema
+
+
+def analyze_component(time_ps, msd_ang, start_fraction=0.2):
+    """
+    Fit MSD vs time for a single component.
+    """
+    if np.all(np.isnan(msd_ang)):
+        return None
+
+    time_ps = np.asarray(time_ps)
+    msd_ang = np.asarray(msd_ang)
+
+    n = len(time_ps)
+    start_idx = int(n * start_fraction)
+    time_ps = time_ps[start_idx:]
+    msd_ang = msd_ang[start_idx:]
+
+    if len(time_ps) < 5:
+        return None
+
+    time_s = time_ps * 1e-12
+    msd_m2 = msd_ang * 1e-20
+
+    slope, intercept, r_value, p_value, std_err = stats.linregress(
+        time_s, msd_m2
+    )
+    r2 = r_value**2
+    D = slope / 2.0  # 1D Einstein relation
+
+    return {
+        "points": len(time_s),
+        "r2": r2,
+        "slope_ang2_per_ns": slope * 1e12,
+        "D_m2_s": D,
+        "std_err_m2_s": std_err / 2.0,
+    }
+
+
+def check_msd_file(filename, species=("Mg", "Al"), component="z"):
+    """
+    Perform quality checks for a given MSD file.
+    """
     try:
-        df = pd.read_csv(filename, sep=r'\s+', skiprows=2, 
-                        names=['step', 'msd_x', 'msd_y', 'msd_z', 'msd_total'],
-                        comment='#')
-        
-        # Convert step to time (ps)
-        time = df['step'].values * 0.001  # ps
-        msd = df['msd_total'].values  # Angstrom^2
-        
-        # Check basic statistics
+        df, schema = load_msd_file(filename)
+    except Exception as exc:
         print(f"\nFile: {filename}")
-        print("=" * 60)
-        print(f"Data points: {len(df)}")
-        print(f"Time range: {time[0]:.1f} to {time[-1]:.1f} ps ({time[-1]/1000:.3f} ns)")
-        print(f"MSD range: {msd.min():.3f} to {msd.max():.3f} Angstrom^2")
-        print(f"MSD change: {msd[-1] - msd[0]:.3f} Angstrom^2")
-        
-        # Check if MSD is increasing
-        if msd[-1] > msd[0]:
-            print(f"[OK] MSD is increasing (good sign)")
-        else:
-            print(f"[WARNING] MSD is not increasing - may indicate no diffusion")
-        
-        # Check linearity (simple check)
-        from scipy import stats
-        slope, intercept, r_value, p_value, std_err = stats.linregress(time, msd)
-        r2 = r_value ** 2
-        
-        print(f"Linear fit R^2: {r2:.4f}")
-        if r2 > 0.95:
-            print(f"[OK] Good linearity (R^2 > 0.95)")
-        elif r2 > 0.8:
-            print(f"[WARNING] Moderate linearity (R^2 = {r2:.3f})")
-        else:
-            print(f"[WARNING] Poor linearity (R^2 = {r2:.3f}) - may need longer simulation")
-        
-        # Check if values are reasonable
-        # At 800 K, MSD after 0.06 ns should be growing
-        if msd[-1] < 1.0:
-            print(f"[WARNING] MSD values are very small (< 1 Angstrom^2)")
-            print(f"  This might indicate:")
-            print(f"  - Simulation too short")
-            print(f"  - Temperature too low for measurable diffusion")
-            print(f"  - System not properly equilibrated")
-        
-        # Estimate diffusivity (rough)
-        if r2 > 0.5 and msd[-1] > msd[0]:
-            # D = slope / 6 (convert Angstrom^2/ps to m^2/s)
-            D_rough = (slope / 6.0) * 1e-20  # Angstrom^2/ps to m^2/s
-            print(f"Rough diffusivity estimate: {D_rough:.2e} m^2/s")
-        
-        return df, r2
-        
-    except Exception as e:
-        print(f"Error reading {filename}: {e}")
-        return None, None
+        print(f"  Error: {exc}")
+        return
+
+    time_ps = (df["step"] - df["step"].iloc[0]) * 0.001
+    time_ns = time_ps / 1000.0
+
+    print(f"\nFile: {filename}")
+    print("=" * 70)
+    print(f"Records: {len(df)}")
+    print(f"Time window: {time_ns.iloc[0]:.3f} - {time_ns.iloc[-1]:.3f} ns")
+
+    if schema == "bulk":
+        print("Detected schema: bulk (single species MSD).")
+        results = analyze_component(time_ps, df["msd_total"])
+        if results:
+            print(
+                f"  R² = {results['r2']:.4f}, "
+                f"D ≈ {results['D_m2_s']:.3e} m²/s "
+                f"({results['points']} points)"
+            )
+        return
+
+    print("Detected schema: interface (Mg & Al columns).")
+    for sp in species:
+        column = f"{sp}_{component}"
+        if column not in df.columns:
+            print(f"  {sp}: column {column} missing, skipping.")
+            continue
+
+        stats_dict = analyze_component(time_ps, df[column])
+        if not stats_dict:
+            print(f"  {sp}: insufficient data after transient cut.")
+            continue
+
+        trend = (
+            "OK"
+            if stats_dict["r2"] >= 0.95
+            else ("WARN" if stats_dict["r2"] >= 0.8 else "POOR")
+        )
+        print(
+            f"  {sp}: R^2={stats_dict['r2']:.4f} ({trend}), "
+            f"D ~ {stats_dict['D_m2_s']:.3e} m^2/s, "
+            f"points={stats_dict['points']}"
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Check MSD data quality.")
+    parser.add_argument(
+        "--pattern",
+        default="outputs/interface_1k/msd_interface_T*.dat",
+        help="Glob pattern for MSD files to check.",
+    )
+    parser.add_argument(
+        "--species",
+        nargs="+",
+        default=["Mg", "Al"],
+        help="Species to analyze (for interface schema).",
+    )
+    parser.add_argument(
+        "--component",
+        default="z",
+        choices=["x", "y", "z", "total"],
+        help="MSD component to analyze.",
+    )
+    parser.add_argument(
+        "--start-fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of initial data to discard before fitting.",
+    )
+
+    args = parser.parse_args()
+
+    files = sorted(glob.glob(args.pattern))
+    if not files:
+        print(f"No MSD files found for pattern: {args.pattern}")
+        return
+
+    print("Checking MSD Data Quality")
+    print("=" * 70)
+    for filename in files:
+        check_msd_file(filename, species=args.species, component=args.component)
+
 
 if __name__ == "__main__":
-    import glob
-    
-    print("Checking MSD Data Quality")
-    print("=" * 60)
-    
-    # Check all MSD files
-    msd_files = glob.glob("outputs/bulk/msd_T*.dat")
-    
-    if len(msd_files) == 0:
-        print("No MSD files found in outputs/bulk/")
-    else:
-        for f in sorted(msd_files):
-            check_msd_file(f)
-    
-    print("\n" + "=" * 60)
-    print("Summary:")
-    print("Good MSD data should:")
-    print("  1. Increase linearly with time")
-    print("  2. Have R^2 > 0.95 for linear fit")
-    print("  3. Show clear growth over simulation time")
-    print("  4. Values should be reasonable for temperature")
-
+    main()

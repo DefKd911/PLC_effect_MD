@@ -10,6 +10,11 @@ variable data_file string "inputs/bulk/bulk_system.data"
 variable output_dir string "outputs/bulk"
 variable dump_freq equal 1000  # Dump frequency
 variable thermo_freq equal 100 # Thermo frequency
+variable equil_steps equal 100000  # 0.1 ns at 1 fs
+variable prod_steps equal 1000000  # 1.0 ns at 1 fs
+
+# Ensure output directory exists
+shell mkdir ${output_dir}
 
 # ============================================
 # INITIALIZATION
@@ -33,9 +38,12 @@ pair_coeff * * ${pot_file} Al Mg
 # ============================================
 # COMPUTE DEFINITIONS
 # ============================================
-# Compute MSD for Mg atoms (type 2)
-compute msd_Mg all msd com yes
-compute temp_Mg all temp/partial 0 0 1  # Temperature of Mg atoms only
+# Define atomic groups
+group Al type 1
+group Mg type 2
+
+# Compute temperature of Mg atoms only
+compute temp_Mg Mg temp  # Temperature of Mg atoms only
 
 # ============================================
 # EQUILIBRATION: NPT
@@ -48,7 +56,7 @@ velocity all create ${T} 12345 rot yes dist gaussian
 fix 1 all npt temp ${T} ${T} 0.1 iso 0.0 0.0 1.0
 thermo_style custom step temp pe ke etotal press vol lx ly lz
 thermo ${thermo_freq}
-run 100000  # 0.1 ns equilibration (100,000 steps - per professor advice)
+run ${equil_steps}  # 0.1 ns equilibration
 
 # ============================================
 # PRODUCTION: NVT
@@ -56,12 +64,15 @@ run 100000  # 0.1 ns equilibration (100,000 steps - per professor advice)
 unfix 1
 fix 1 all nvt temp ${T} ${T} 0.1
 
-# Reset MSD to zero at start of production run
-compute msd_Mg all msd com yes
-run 0  # Reset MSD reference positions
+# Define MSD computes at start of production run (reference positions reset automatically)
+compute msd_Mg Mg msd com yes
+compute msd_Al Al msd com yes
+run 0  # Reset MSD reference positions to current positions
 
 # Now start collecting MSD data
-fix 2 all ave/time 1 1 ${dump_freq} c_msd_Mg[1] c_msd_Mg[2] c_msd_Mg[3] c_msd_Mg[4] file ${output_dir}/msd_T${T}.dat
+fix 2 all ave/time 1 1 ${dump_freq} c_msd_Mg[1] c_msd_Mg[2] c_msd_Mg[3] c_msd_Mg[4] &
+    c_msd_Al[1] c_msd_Al[2] c_msd_Al[3] c_msd_Al[4] &
+    file ${output_dir}/msd_T${T}.dat
 
 dump 1 all custom ${dump_freq} ${output_dir}/traj_T${T}.lammpstrj id type x y z
 dump_modify 1 element Al Mg
@@ -69,7 +80,7 @@ dump_modify 1 element Al Mg
 thermo_style custom step temp pe ke etotal press vol c_temp_Mg
 thermo ${thermo_freq}
 
-run 100000  # 1 ns production (100,000 steps - per professor advice: shorter at higher T is OK)
+run ${prod_steps}  # 1.0 ns production (extend if MSD linearity fails)
 
 # ============================================
 # FINAL OUTPUT

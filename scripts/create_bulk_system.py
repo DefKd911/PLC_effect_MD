@@ -4,21 +4,21 @@ Script to create initial Al-5wt%Mg bulk system for LAMMPS.
 
 import numpy as np
 
-def create_bulk_system(a0=4.05, nx=6, ny=6, nz=6, Mg_atomic_percent=5.52):
+def create_bulk_system(a0=4.05, nx=7, ny=6, nz=6, Mg_atomic_percent=5.52):
     """
     Create FCC Al-Mg bulk system.
     
     Updated per professor advice:
-    - System size: At least 1000 atoms (not too small, not too big for optimization)
-    - 6×6×6 unit cells = 864 atoms (4 atoms per unit cell)
-    - This balances the "at least 1000 atoms" requirement with optimization needs
+    - System size: >= 1000 atoms (avoid too small systems)
+    - Default 7×6×6 unit cells = 1008 atoms (4 atoms per unit cell)
+    - Enables quick tweaks if a different size is required for convergence tests
     
     Parameters:
     -----------
     a0 : float
         Lattice constant (Angstrom)
     nx, ny, nz : int
-        Number of unit cells in each direction (default 6×6×6 = 864 atoms)
+        Number of unit cells in each direction (default 7×6×6 = 1008 atoms)
     Mg_atomic_percent : float
         Atomic percent of Mg (default 5.52 at% for 5 wt%)
     

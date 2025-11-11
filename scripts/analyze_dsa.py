@@ -3,13 +3,25 @@ Updated DSA analysis script per professor feedback.
 Uses two separate L values and analytical pipe diffusion.
 """
 
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import sys
-import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import b, epsilon_dot, rho_m_values, T_dsa, L_capture, L_travel, f_pipe
+from constants import (  # noqa: E402
+    L_capture,
+    L_travel,
+    T_dsa,
+    b,
+    epsilon_dot,
+    f_pipe,
+    rho_m_values,
+)
 
 def compute_tau_diff(L_c, D_eff):
     """
@@ -51,7 +63,28 @@ def compute_tau_wait(L_t, rho_m, b, epsilon_dot):
     """
     return L_t / (rho_m * b * epsilon_dot)
 
-def analyze_dsa_condition(D_bulk_df):
+def normalize_diffusivity_df(df):
+    """
+    Ensure dataframe has columns ['T', 'D'].
+    Accepts files with 'D', 'D_bulk', or 'D_interdiff'.
+    """
+    df = df.copy()
+    if "D" in df.columns:
+        pass
+    elif "D_bulk" in df.columns:
+        df = df.rename(columns={"D_bulk": "D"})
+    elif "D_interdiff" in df.columns:
+        df = df.rename(columns={"D_interdiff": "D"})
+    else:
+        raise KeyError(
+            "Diffusivity column not found. Expected 'D', 'D_bulk', or 'D_interdiff'."
+        )
+    if "T" not in df.columns:
+        raise KeyError("Temperature column 'T' is required.")
+    return df[["T", "D"]].dropna()
+
+
+def analyze_dsa_condition(D_bulk_df, pipe_factor):
     """
     Analyze DSA condition using MD-derived bulk diffusivity.
     Updated per professor feedback: uses two separate L values and analytical pipe diffusion.
@@ -76,9 +109,13 @@ def analyze_dsa_condition(D_bulk_df):
         print("Error: scipy not installed. Please install: pip install scipy")
         return {}
     
-    # Interpolate D_bulk
-    f_D_bulk = interp1d(D_bulk_df['T'], D_bulk_df['D'],
-                       kind='linear', bounds_error=False, fill_value='extrapolate')
+    f_D_bulk = interp1d(
+        D_bulk_df["T"],
+        D_bulk_df["D"],
+        kind="linear",
+        bounds_error=False,
+        fill_value="extrapolate",
+    )
     
     # Apply pipe diffusion correction: D_eff = D_bulk * (1 + f_pipe)
     
@@ -89,10 +126,10 @@ def analyze_dsa_condition(D_bulk_df):
                 
                 for T in T_dsa:
                     # Get bulk diffusivity at this temperature
-                    D_bulk = f_D_bulk(T)  # m²/s
+                    D_bulk = float(f_D_bulk(T))  # m²/s
                     
                     # Apply pipe diffusion correction
-                    D_eff = D_bulk * (1.0 + f_pipe)  # Effective diffusivity
+                    D_eff = D_bulk * (1.0 + pipe_factor)  # Effective diffusivity
                     
                     # Compute timescales with CORRECT L values
                     tau_diff = compute_tau_diff(L_c, D_eff)  # Uses L_c (capture radius)
@@ -102,12 +139,12 @@ def analyze_dsa_condition(D_bulk_df):
                     ratio = tau_diff / tau_wait
                     
                     data.append({
-                        'T': T,
-                        'D_bulk': D_bulk,
-                        'D_eff': D_eff,
-                        'tau_diff': tau_diff,
-                        'tau_wait': tau_wait,
-                        'ratio': ratio
+                        "T": T,
+                        "D_bulk": D_bulk,
+                        "D_eff": D_eff,
+                        "tau_diff": tau_diff,
+                        "tau_wait": tau_wait,
+                        "ratio": ratio,
                     })
                 
                 key = (rho_m, L_c, L_t)
@@ -173,15 +210,40 @@ def main():
     print("=" * 60)
     
     # Load data
+    parser = argparse.ArgumentParser(
+        description="Analyze DSA/PLC conditions using diffusivity data."
+    )
+    parser.add_argument(
+        "--input",
+        default="outputs/analysis/arrhenius_interface_interdiff_extrapolated.csv",
+        help="CSV file with columns T and D (or D_bulk/D_interdiff).",
+    )
+    parser.add_argument(
+        "--pipe-factor",
+        type=float,
+        default=f_pipe,
+        help="Pipe diffusion correction factor (D_eff = D*(1 + factor)).",
+    )
+    parser.add_argument(
+        "--output",
+        default="outputs/analysis",
+        help="Directory to store analysis results.",
+    )
+    args = parser.parse_args()
+
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     try:
-        D_bulk_df = pd.read_csv("outputs/analysis/diffusivity_bulk_extrapolated.csv")
+        df_input = pd.read_csv(args.input)
     except FileNotFoundError:
-        print("Error: Bulk diffusivity data not found.")
-        print("Please run fit_arrhenius.py first.")
+        print(f"Error: Diffusivity data file not found: {args.input}")
+        print("Run fit_arrhenius.py to generate extrapolated diffusivities.")
         return
-    
-    # Analyze with updated method (two L values, analytical pipe diffusion)
-    results = analyze_dsa_condition(D_bulk_df)
+
+    df_input = normalize_diffusivity_df(df_input)
+
+    results = analyze_dsa_condition(df_input, args.pipe_factor)
     
     # Plot and save results
     import os
@@ -196,17 +258,21 @@ def main():
         
         if in_regime.any():
             T_range = df[in_regime]['T']
-            print(f"ρ_m={rho_m:.0e} m⁻², L_c={L_c*1e9:.1f} nm, L_t={L_t*1e6:.1f} µm:")
+            print(
+                f"rho_m={rho_m:.0e} m^-2, L_c={L_c*1e9:.1f} nm, "
+                f"L_t={L_t*1e6:.1f} um:"
+            )
             print(f"  DSA possible: {T_range.min():.0f} - {T_range.max():.0f} K")
         
         # Save results
-        filename = f"outputs/analysis/dsa_rho{rho_m:.0e}_Lc{L_c*1e9:.0f}nm_Lt{L_t*1e6:.1f}um.csv"
+        filename = output_dir / f"dsa_rho{rho_m:.0e}_Lc{L_c*1e9:.0f}nm_Lt{L_t*1e6:.1f}um.csv"
         df.to_csv(filename, index=False)
     
     # Plot
-    plot_dsa_analysis(results)
+    plot_path = output_dir / "tau_comparison.png"
+    plot_dsa_analysis(results, output_file=str(plot_path))
     
-    print("\nResults saved to outputs/analysis/")
+    print(f"\nResults saved to {output_dir}/")
 
 if __name__ == "__main__":
     main()
